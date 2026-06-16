@@ -1,48 +1,41 @@
-import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
-import { hilog } from '@kit.PerformanceAnalysisKit';
-import { window } from '@kit.ArkUI';
-
-const DOMAIN = 0x0000;
+import AbilityConstant from '@ohos.app.ability.AbilityConstant';
+import UIAbility from '@ohos.app.ability.UIAbility';
+import Want from '@ohos.app.ability.Want';
+import window from '@ohos.window';
 
 export default class EntryAbility extends UIAbility {
-  onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
-    try {
-      this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
-    } catch (err) {
-      hilog.error(DOMAIN, 'testTag', 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
+  onCreate(want: Want, launchParam: AbilityConstant.LaunchParam) {
+    // 接收从其他设备迁移过来的游戏状态
+    if (want.parameters && want.parameters.gameState) {
+      AppStorage.setOrCreate('migrateState', want.parameters.gameState);
+    } else {
+      AppStorage.setOrCreate('migrateState', null);
     }
-    hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
   }
 
-  onDestroy(): void {
-    hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onDestroy');
+  onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam) {
+    // 当页面已存在，又收到新的迁移数据时
+    if (want.parameters && want.parameters.gameState) {
+      AppStorage.setOrCreate('migrateState', want.parameters.gameState);
+    }
   }
 
-  onWindowStageCreate(windowStage: window.WindowStage): void {
-    // Main window is created, set main page for this ability
-    hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageCreate');
+  onContinue(wantParam: Record<string, Object>) {
+    // 取出页面保存的最新游戏状态，放入迁移数据
+    let state = AppStorage.get('saveState') as string;
+    if (state) {
+      wantParam.gameState = state;
+    }
+    return AbilityConstant.OnContinueResult.AGREE;
+  }
 
-    windowStage.loadContent('pages/Index', (err) => {
+  onWindowStageCreate(windowStage: window.WindowStage) {
+    windowStage.loadContent('pages/Index', (err, data) => {
       if (err.code) {
-        hilog.error(DOMAIN, 'testTag', 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));
+        console.error('Failed to load the content. Cause: ' + JSON.stringify(err));
         return;
       }
-      hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
+      console.info('Succeeded in loading the content. Data: ' + JSON.stringify(data));
     });
-  }
-
-  onWindowStageDestroy(): void {
-    // Main window is destroyed, release UI related resources
-    hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageDestroy');
-  }
-
-  onForeground(): void {
-    // Ability has brought to foreground
-    hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onForeground');
-  }
-
-  onBackground(): void {
-    // Ability has back to background
-    hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onBackground');
   }
 }

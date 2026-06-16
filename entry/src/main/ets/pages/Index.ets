@@ -1,4 +1,20 @@
+import { display } from '@kit.ArkUI';
 import { KeyCode } from '@ohos.multimodalInput.keyCode';
+
+// 定义游戏状态结构，避免使用 any
+interface GameState {
+  snake: number[][];
+  blackBlocks: number[][];
+  apple: number[];
+  appleType: number;
+  curDir: number[];
+  nextDir: number[];
+  score: number;
+  length: number;
+  speed: number;
+  appleCount: number;
+  gameOver: boolean;
+}
 
 @Entry
 @Component
@@ -6,25 +22,49 @@ struct SnakeGame {
   @State snake: number[][] = [];
   @State blackBlocks: number[][] = [];
   @State apple: number[] = [];
-  @State appleType: number = 0; // 0红 1紫
+  @State appleType: number = 0;
   @State curDir: number[] = [0, 1];
   @State nextDir: number[] = [0, 1];
   @State gameRunning: boolean = false;
   @State gameOver: boolean = false;
   @State score: number = 0;
   @State length: number = 3;
-  @State speed: number = 120; // 默认中等
+  @State speed: number = 120;
   @State appleCount: number = 0;
+
+  @State cellSize: number = 20;
+  @State mapSize: number = 15;
+  @State mapPixel: number = 300;
 
   private timer: number = -1;
   private settings: RenderingContextSettings = new RenderingContextSettings(true);
   private ctx: CanvasRenderingContext2D = new CanvasRenderingContext2D(this.settings);
-  private readonly cellSize: number = 25;
-  private readonly mapSize: number = 15;
-  private readonly mapPixel: number = this.mapSize * this.cellSize;
 
   aboutToAppear() {
-    this.initGame();
+    let displayInfo = display.getDefaultDisplaySync();
+    let density = displayInfo.densityPixels;
+    let screenWidthVP = displayInfo.width / density;
+    let screenHeightVP = displayInfo.height / density;
+    let usableSize = Math.min(screenWidthVP, screenHeightVP) * 0.85;
+    this.cellSize = Math.floor(usableSize / this.mapSize);
+    this.mapPixel = this.cellSize * this.mapSize;
+
+
+    // 用泛型获取存储的字符串，避免 any
+    let savedState = AppStorage.get<string>('migrateState');
+    if (savedState) {
+      try {
+        // 显式断言为 GameState，消除 JSON.parse 的 any
+        let state: GameState = JSON.parse(savedState) as GameState;
+        this.restoreState(state);
+        AppStorage.set('migrateState', null);
+      } catch (e) {
+        console.error('恢复游戏状态失败', e);
+        this.initGame();
+      }
+    } else {
+      this.initGame();
+    }
   }
 
   initGame() {
@@ -39,6 +79,44 @@ struct SnakeGame {
     this.gameRunning = false;
     this.generateApple();
     this.drawGame();
+    this.updateSaveState();
+  }
+
+  restoreState(state: GameState) {
+    this.snake = state.snake;
+    this.blackBlocks = state.blackBlocks;
+    this.apple = state.apple;
+    this.appleType = state.appleType;
+    this.curDir = state.curDir;
+    this.nextDir = state.nextDir;
+    this.score = state.score;
+    this.length = state.length;
+    this.speed = state.speed;
+    this.appleCount = state.appleCount;
+    this.gameOver = state.gameOver;
+    this.gameRunning = false;
+    this.drawGame();
+  }
+
+  getCurrentState(): string {
+    let state: GameState = {
+      snake: this.snake,
+      blackBlocks: this.blackBlocks,
+      apple: this.apple,
+      appleType: this.appleType,
+      curDir: this.curDir,
+      nextDir: this.nextDir,
+      score: this.score,
+      length: this.length,
+      speed: this.speed,
+      appleCount: this.appleCount,
+      gameOver: this.gameOver
+    };
+    return JSON.stringify(state);
+  }
+
+  updateSaveState() {
+    AppStorage.setOrCreate('saveState', this.getCurrentState());
   }
 
   startGame() {
@@ -50,6 +128,7 @@ struct SnakeGame {
       this.moveSnake();
       this.drawGame();
     }, this.speed);
+    this.updateSaveState();
     this.drawGame();
   }
 
@@ -59,12 +138,14 @@ struct SnakeGame {
       this.timer = -1;
     }
     this.gameRunning = false;
+    this.updateSaveState();
     this.drawGame();
   }
 
   gameEnd() {
     this.stopGame();
     this.gameOver = true;
+    this.updateSaveState();
     this.drawGame();
   }
 
@@ -88,10 +169,22 @@ struct SnakeGame {
 
   moveSnake() {
     if (!this.gameRunning) return;
-    this.curDir = this.nextDir;
-    const head = this.snake[0];
-    const newHead = [head[0] + this.curDir[0], head[1] + this.curDir[1]];
 
+    // 决定本次实际移动方向：优先使用 nextDir，除非它为空或与当前方向相反
+    let moveDir = this.nextDir;
+    if (moveDir[0] === 0 && moveDir[1] === 0) {
+      // 初始状态或意外清空，保持原方向
+      moveDir = this.curDir;
+    } else if (moveDir[0] === -this.curDir[0] && moveDir[1] === -this.curDir[1]) {
+      // nextDir 与当前方向相反，忽略，继续用 curDir
+      moveDir = this.curDir;
+    }
+
+    const head = this.snake[0];
+    const newHead = [head[0] + moveDir[0], head[1] + moveDir[1]];
+
+    // 移动完成后，更新当前方向
+    this.curDir = moveDir;
     if (newHead[0] < 0 || newHead[0] >= this.mapSize ||
       newHead[1] < 0 || newHead[1] >= this.mapSize) {
       this.gameEnd();
@@ -125,6 +218,7 @@ struct SnakeGame {
     }
     if (this.blackBlocks.some(b => b[0] === headPos[0] && b[1] === headPos[1])) {
       this.gameEnd();
+      return;
     }
   }
 
@@ -134,9 +228,9 @@ struct SnakeGame {
     const mapPx = this.mapPixel;
 
     ctx.clearRect(0, 0, mapPx, mapPx);
-    ctx.fillStyle = '#2d2d2d';
+    ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, mapPx, mapPx);
-    ctx.strokeStyle = '#555';
+    ctx.strokeStyle = '#000000';
     ctx.lineWidth = 0.5;
     for (let i = 0; i <= this.mapSize; i++) {
       ctx.beginPath();
@@ -204,13 +298,13 @@ struct SnakeGame {
   build() {
     Column() {
       Text('贪吃蛇')
-        .fontSize(26)
+        .fontSize(this.cellSize * 0.9)
         .fontWeight(FontWeight.Bold)
         .margin({ top: 10, bottom: 5 })
 
       Row() {
-        Text(`分数：${this.score}`).fontSize(18).margin({ right: 24 })
-        Text(`长度：${this.length}`).fontSize(18)
+        Text(`分数：${this.score}`).fontSize(this.cellSize * 0.6).margin({ right: this.cellSize })
+        Text(`长度：${this.length}`).fontSize(this.cellSize * 0.6)
       }
       .margin({ bottom: 10 })
 
@@ -221,7 +315,7 @@ struct SnakeGame {
         .focusable(true)
         .tabIndex(0)
         .onReady(() => {
-          this.drawGame(); // 首次绘制
+          this.drawGame();
         })
         .onKeyEvent((event: KeyEvent) => {
           switch (event.keyCode) {
@@ -233,26 +327,53 @@ struct SnakeGame {
           return true;
         })
 
-      Row() { Button('↑').width(50).height(50).fontSize(22).onClick(() => this.changeDirection(-1, 0)) }
-      .margin({ top: 12 })
+      Row() {
+        Button('↑')
+          .width(this.cellSize * 2.2)
+          .height(this.cellSize * 2.2)
+          .fontSize(this.cellSize * 0.8)
+          .onClick(() => this.changeDirection(-1, 0))
+      }
+      .margin({ top: this.cellSize * 0.5 })
 
       Row() {
-        Button('←').width(50).height(50).fontSize(22).margin({ right: 20 }).onClick(() => this.changeDirection(0, -1))
-        Button('↓').width(50).height(50).fontSize(22).margin({ right: 20 }).onClick(() => this.changeDirection(1, 0))
-        Button('→').width(50).height(50).fontSize(22).onClick(() => this.changeDirection(0, 1))
+        Button('←')
+          .width(this.cellSize * 2.2)
+          .height(this.cellSize * 2.2)
+          .fontSize(this.cellSize * 0.8)
+          .margin({ right: this.cellSize * 1.2 })
+          .onClick(() => this.changeDirection(0, -1))
+        Button('↓')
+          .width(this.cellSize * 2.2)
+          .height(this.cellSize * 2.2)
+          .fontSize(this.cellSize * 0.8)
+          .margin({ right: this.cellSize * 1.2 })
+          .onClick(() => this.changeDirection(1, 0))
+        Button('→')
+          .width(this.cellSize * 2.2)
+          .height(this.cellSize * 2.2)
+          .fontSize(this.cellSize * 0.8)
+          .onClick(() => this.changeDirection(0, 1))
       }
-      .margin({ top: 6, bottom: 10 })
+      .margin({ top: this.cellSize * 0.3, bottom: this.cellSize * 0.5 })
 
       Row() {
-        Button('简单 (200ms)').fontSize(15).onClick(() => { this.speed = 200; this.initGame(); })
-        Button('中等 (120ms)').fontSize(15).margin({ left: 10, right: 10 }).onClick(() => { this.speed = 120; this.initGame(); })
-        Button('困难 (80ms)').fontSize(15).onClick(() => { this.speed = 80; this.initGame(); })
+        Button('简单 (200ms)')
+          .fontSize(this.cellSize * 0.55)
+          .onClick(() => { this.speed = 200; this.initGame(); })
+        Button('中等 (120ms)')
+          .fontSize(this.cellSize * 0.55)
+          .margin({ left: this.cellSize * 0.5, right: this.cellSize * 0.5 })
+          .onClick(() => { this.speed = 120; this.initGame(); })
+        Button('困难 (80ms)')
+          .fontSize(this.cellSize * 0.55)
+          .onClick(() => { this.speed = 80; this.initGame(); })
       }
-      .margin({ bottom: 12 })
+      .margin({ bottom: this.cellSize * 0.6 })
 
       Button(this.gameRunning ? '暂停' : (this.gameOver ? '重新开始' : '开始游戏'))
-        .fontSize(18)
-        .width(140)
+        .fontSize(this.cellSize * 0.7)
+        .width(this.cellSize * 6)
         .onClick(() => {
           if (this.gameRunning) this.stopGame();
           else {
